@@ -1,0 +1,24 @@
+migrator
+
+default: migrate
+-re: drop db, migrate
+-seed: only seed
+-re -seed: drop db, migrate, seed
+disable transactions
+
+
+
+По умолчанию запускает миграции по указанному пути.
+Формат миграций:
+  {version}_{title}.up.sql
+  {version}_{title}.down.sql
+Отключение транзакции в миграции:
+  -- NO TRANSACTION
+
+С -seed наполняет базу данных по указанному пути.
+С -re перезапускает мииграции.
+
+-re -seed могут быть скомбинированы.
+
+
+list of irreversible migrations
