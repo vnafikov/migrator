@@ -3,8 +3,8 @@
 Performs database migrations.
 
 ### Help:
-```
-...migrator -h
+```bash
+migrator -h
 ```
 
 ### Migration filename format:
@@ -13,7 +13,7 @@ Performs database migrations.
 {datetime}_{title}.down.sql
 ```
 
-### Creating files:
+### Creating files (shell):
 Migration:
 ```bash
 d=`date +%Y%m%d%H%M%S`
@@ -27,6 +27,7 @@ Seed:
 ```
 
 ### Disabling transaction:
+At the beginning of the *.sql file:
 ```sql
 -- NO TRANSACTION
 ```
