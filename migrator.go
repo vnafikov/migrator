@@ -1,30 +1,86 @@
 package migrator
 
 import (
+	"cmp"
+	"embed"
 	"flag"
 	"fmt"
+	"io/fs"
+	"log"
+	"slices"
+	"strconv"
+	"strings"
+)
+
+type Options struct {
+	FS        embed.FS
+	Databases map[string]*Database
+}
+
+type Database struct {
+	Connect          func()
+	Close            func()
+	AdminConnect     func()
+	AdminClose       func()
+	BeginTransaction func()
+	EndTransaction   func()
+	ExecQuery        func(string)
+	ExecCreateDB     func()
+	ExecDropDB       func()
+}
+
+type flagsSt struct {
+	bool   map[string]*bool
+	string map[string]*string
+	any    bool
+}
+
+type filesSt struct {
+	migrations struct {
+		down []migration
+		up   []migration
+	}
+	seeds []migration
+}
+
+type migration struct {
+	version  int
+	filepath string
+}
+
+const (
+	versionLength        = 14
+	noTransactionComment = "-- NO TRANSACTION"
 )
 
 var (
-	bFlags map[string]*bool
-	sFlags map[string]*string
+	options Options
+	flags   = flagsSt{
+		bool:   make(map[string]*bool),
+		string: make(map[string]*string),
+	}
+	databases []string
+	files     = make(map[string]*filesSt)
 )
 
-func Init() {
-	bFlags["migrate"] = flag.Bool("migrate", true, "run migrations. True by default.")
-	bFlags["seed"] = flag.Bool("seed", false, "seed the database.")
-	bFlags["createdb"] = flag.Bool("", false, "create the database.")
-	bFlags["dropdb"] = flag.Bool("", false, "drop the database.")
-	bFlags["re"] = flag.Bool("re", false, "replay migrations: reset the database and run migrations.")
-	sFlags["up"] = flag.String("up", "", "run migration by version (datetime).")
-	sFlags["down"] = flag.String("down", "", "rollback migration by version (datetime).")
-	bFlags["irr"] = flag.Bool("irr", false, "list of irreversible migrations (without *.down.sql files).")
+func Init(opt Options) {
+	options = opt
+	optionDatabaseNames := mapKeys(options.Databases)
+	dbFlag := flag.String("databases", "", fmt.Sprintf(`options: %s. All by default.`, strings.Join(optionDatabaseNames, ", ")))
+	flags.bool["migrate"] = flag.Bool("migrate", false, "run migrations.")
+	flags.bool["seed"] = flag.Bool("seed", false, "seed the database.")
+	flags.bool["createdb"] = flag.Bool("createdb", false, "create the database.")
+	flags.bool["dropdb"] = flag.Bool("dropdb", false, "drop the database.")
+	flags.bool["re"] = flag.Bool("re", false, "replay migrations: reset the database and run migrations.")
+	flags.string["up"] = flag.String("up", "", "run migration by version (datetime).")
+	flags.string["down"] = flag.String("down", "", "rollback migration by version (datetime).")
+	flags.bool["irr"] = flag.Bool("irr", false, "list of irreversible migrations (without *.down.sql files).")
 
 	usage := flag.Usage
 	flag.Usage = func() {
 		fmt.Print(`Performs database migrations.
 
-Runs only migrations by default.
+Runs migrations and seeding by default.
 The flags can be combined.
 
 `)
@@ -32,14 +88,245 @@ The flags can be combined.
 	}
 
 	flag.Parse()
+	setDatabases(optionDatabaseNames, dbFlag)
+	setFlagsAny()
+	readFilenames()
+}
+
+func mapKeys[M ~map[K]V, K comparable, V any](m M) []K {
+	r := make([]K, 0, len(m))
+	for k := range m {
+		r = append(r, k)
+	}
+	return r
+}
+
+func setDatabases(optionDatabaseNames []string, dbFlag *string) {
+	if *dbFlag == "" {
+		databases = optionDatabaseNames
+		return
+	}
+
+	databaseNames := strings.Split(*dbFlag, ",")
+	for i := range databaseNames {
+		databaseNames[i] = strings.TrimSpace(databaseNames[i])
+	}
+	databases = slicesIntersection(optionDatabaseNames, databaseNames)
+}
+
+func slicesIntersection[T comparable](a, b []T) []T {
+	m := make(map[T]struct{}, len(a))
+	for i := range a {
+		m[a[i]] = struct{}{}
+	}
+	intersection := make([]T, 0, len(b))
+	for i := range b {
+		if _, ok := m[b[i]]; ok {
+			intersection = append(intersection, b[i])
+		}
+	}
+	return intersection
+}
+
+func setFlagsAny() {
+	for key := range flags.bool {
+		if *flags.bool[key] {
+			flags.any = true
+			break
+		}
+	}
+	if !flags.any {
+		for key := range flags.string {
+			if *flags.string[key] != "" {
+				flags.any = true
+				break
+			}
+		}
+	}
+}
+
+func readFilenames() {
+	for i := range databases {
+		files[databases[i]] = new(filesSt)
+		readMigrationFilenames(databases[i])
+		readSeedFilenames(databases[i])
+	}
+}
+
+func readMigrationFilenames(database string) {
+	entries := readDir(database)
+	sortEntries(entries)
+	for _, entry := range entries {
+		m := readMigration(entry, database)
+		if m == nil {
+			continue
+		}
+
+		if strings.Contains(entry.Name(), ".down.") {
+			files[database].migrations.down = append(files[database].migrations.down, *m)
+		} else if strings.Contains(entry.Name(), ".up.") {
+			files[database].migrations.up = append(files[database].migrations.up, *m)
+		}
+	}
+}
+
+func readSeedFilenames(database string) {
+	path := fmt.Sprintf("%s/seeds", database)
+	entries := readDir(path)
+	sortEntries(entries)
+	for _, entry := range entries {
+		s := readMigration(entry, path)
+		if s == nil {
+			continue
+		}
+
+		files[database].seeds = append(files[database].seeds, *s)
+	}
+}
+
+func readDir(name string) []fs.DirEntry {
+	entries, err := options.FS.ReadDir(name)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return entries
+}
+
+func sortEntries(entries []fs.DirEntry) {
+	slices.SortStableFunc(entries, func(a, b fs.DirEntry) int {
+		return cmp.Compare(a.Name(), b.Name())
+	})
+}
+
+func readMigration(entry fs.DirEntry, path string) *migration {
+	if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
+		return nil
+	}
+	version, err := strconv.Atoi(entry.Name()[:versionLength])
+	if err != nil {
+		return nil
+	}
+
+	return &migration{
+		version:  version,
+		filepath: fmt.Sprintf("%s/%s", path, entry.Name()),
+	}
 }
 
 func Run() {
+	for i := range databases {
+		database := options.Databases[databases[i]]
+		f := files[databases[i]]
+		if *flags.bool["dropdb"] || *flags.bool["createdb"] {
+			database.AdminConnect()
+			if *flags.bool["dropdb"] {
+				database.ExecDropDB()
+			}
+			if *flags.bool["createdb"] {
+				database.ExecCreateDB()
+			}
+			database.AdminClose()
+		}
+		if *flags.bool["migrate"] || !flags.any {
+			database.Connect()
+			migrate(database, f)
+			database.Close()
+		}
+		if *flags.string["down"] != "" {
+			var m *migration
+			for _, down := range f.migrations.down {
+				if *flags.string["down"] == strconv.Itoa(down.version) {
+					m = &down
+					break
+				}
+			}
+			if m != nil {
+				database.Connect()
+				migrateFile(database, m)
+				database.Close()
+			}
+		}
+		if *flags.string["up"] != "" {
+			var m *migration
+			for _, up := range f.migrations.up {
+				if *flags.string["up"] == strconv.Itoa(up.version) {
+					m = &up
+					break
+				}
+			}
+			if m != nil {
+				database.Connect()
+				migrateFile(database, m)
+				database.Close()
+			}
+		}
+		if *flags.bool["re"] {
+			database.AdminConnect()
+			database.ExecDropDB()
+			database.ExecCreateDB()
+			database.AdminClose()
+			database.Connect()
+			migrate(database, f)
+			seed(database, f)
+			database.Close()
+		}
+		if *flags.bool["seed"] || !flags.any {
+			database.Connect()
+			seed(database, f)
+			database.Close()
+		}
+		if *flags.bool["irr"] {
+			printIrreversibleMigrations(f)
+		}
+	}
 }
 
-func SetFS() {
+func migrate(database *Database, f *filesSt) {
+	for _, m := range f.migrations.up {
+		migrateFile(database, &m)
+	}
 }
 
-func Info() {
-	fmt.Println("MIGRATOR!")
+func migrateFile(database *Database, m *migration) {
+	sqlB, err := options.FS.ReadFile(m.filepath)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	sql := string(sqlB)
+	hasTransaction := !strings.Contains(sql, noTransactionComment)
+	if hasTransaction {
+		database.BeginTransaction()
+	}
+	database.ExecQuery(sql)
+	if hasTransaction {
+		database.EndTransaction()
+	}
 }
+
+func seed(database *Database, f *filesSt) {
+	for _, s := range f.seeds {
+		migrateFile(database, &s)
+	}
+}
+
+func printIrreversibleMigrations(f *filesSt) {
+	migrations := make(map[int]migration, len(f.migrations.down))
+	for _, m := range f.migrations.down {
+		migrations[m.version] = m
+	}
+	var irreversibleMigrations []migration
+	for _, m := range f.migrations.up {
+		if _, ok := migrations[m.version]; !ok {
+			irreversibleMigrations = append(irreversibleMigrations, m)
+		}
+	}
+
+	for _, irreversibleMigration := range irreversibleMigrations {
+		fmt.Println(irreversibleMigration.filepath)
+	}
+}
+
+// schema_migrations (version)
+// schema_seeds (version)
+// Print info.

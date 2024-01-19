@@ -1,5 +1,6 @@
 # Migrator
 
+The Go package.
 Performs database migrations.
 
 ### Help:

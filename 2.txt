@@ -1,11 +1,1 @@
--migrate (default: true)
--seed
--createdb
--dropdb
--re: dropdb, createdb, migrate
--up
--down
--irr: list of irreversible migrations (without *.down.sql files)
-disable transactions
-
--re -seed: dropdb, createdb, migrate, seed
+example
