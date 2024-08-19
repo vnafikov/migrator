@@ -3,6 +3,7 @@ package migrator
 import (
 	"cmp"
 	"embed"
+	"errors"
 	"flag"
 	"fmt"
 	"io/fs"
@@ -197,7 +198,7 @@ func readSeedFilenames(database string) {
 
 func readDir(name string) []fs.DirEntry {
 	entries, err := options.FS.ReadDir(name)
-	if err != nil {
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		log.Fatal(err)
 	}
 	return entries
