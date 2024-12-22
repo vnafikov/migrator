@@ -1,6 +1,7 @@
 # Migrator
 
-The Go package.\
+The Go package.
+
 Performs database migrations.
 
 ### Help:
@@ -66,38 +67,49 @@ func main() {
 }
 
 func database() *migrator.Database {
+	// var (
+	// 	pool      *pgxpool.Pool
+	// 	adminPool *pgxpool.Pool
+	// )
 	return &migrator.Database{
 		Connect: func() {
-			// db.Connect(ctx)
+			// var err error
+			// if pool, err = pgxpool.New(ctx, config.App.Database.DSN); err != nil {
+			// 	log.Fatal(err)
+			// }
 		},
 		Close: func() {
-			// db.Close()
+			// pool.Close()
 		},
 		AdminConnect: func() {
-			// ...
+			// var err error
+			// if adminPool, err = pgxpool.New(ctx, adminDSN); err != nil {
+			// 	log.Fatal(err)
+			// }
 		},
 		AdminClose: func() {
-			// ...
+			// adminPool.Close()
 		},
 		ExecCreateVersionsTable: func(versionsTable string) {
 			// query := `CREATE TABLE IF NOT EXISTS %s (
 			// 	version BIGINT PRIMARY KEY,
-			// 	created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+			// 	created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 			// )`
 			// query = fmt.Sprintf(query, versionsTable)
 			//
-			// if _, err := db.Pool.Exec(ctx, query); err != nil {
+			// if _, err := pool.Exec(ctx, query); err != nil {
 			// 	log.Fatal(err)
 			// }
 		},
 		ExecIsVersionExists: func(versionsTable string, version int) bool {
 			// query := fmt.Sprintf("SELECT 1 FROM %s WHERE version = %d", versionsTable, version)
-			// row := db.Pool.QueryRow(ctx, query)
+			// row := pool.QueryRow(ctx, query)
 			// var exists int
 			// if err := row.Scan(&exists); err != nil {
 			// 	if errors.Is(err, pgx.ErrNoRows) {
 			// 		return false
 			// 	}
+			//
 			// 	log.Fatal(err)
 			// }
 			// return true
@@ -114,20 +126,7 @@ func database() *migrator.Database {
 			// queries += fmt.Sprintf(updateVersionQuery, options.VersionsTable, options.Version)
 			//
 			// if options.InTransaction {
-			// 	tx, err := db.Pool.Begin(ctx)
-			// 	if err != nil {
-			// 		log.Fatal(err)
-			// 	}
-			//
-			// 	if _, err = tx.Exec(ctx, queries); err != nil {
-			// 		log.Println(err)
-			// 		if err = tx.Rollback(ctx); err != nil {
-			// 			log.Println(err)
-			// 		}
-			// 		os.Exit(1)
-			// 	}
-			//
-			// 	if err = tx.Commit(ctx); err != nil {
+			// 	if _, err := pool.Exec(ctx, strings.TrimSpace(queries)); err != nil {
 			// 		log.Fatal(err)
 			// 	}
 			// 	return
@@ -135,7 +134,7 @@ func database() *migrator.Database {
 			//
 			// queryList := strings.Split(queries, ";")
 			// for _, q := range queryList {
-			// 	if _, err := db.Pool.Exec(ctx, strings.TrimSpace(q)); err != nil {
+			// 	if _, err := pool.Exec(ctx, strings.TrimSpace(q)); err != nil {
 			// 		log.Fatal(err)
 			// 	}
 			// }
