@@ -59,19 +59,19 @@ func main() {
 
 	migrator.Init(migrator.Options{
 		FS: migrations.FS,
-		Databases: map[string]*migrator.Database{
+		Databases: map[string]migrator.Database{
 			"db": database(),
 		},
 	})
 	migrator.Run()
 }
 
-func database() *migrator.Database {
+func database() migrator.Database {
 	// var (
 	// 	pool      *pgxpool.Pool
 	// 	adminPool *pgxpool.Pool
 	// )
-	return &migrator.Database{
+	return migrator.Database{
 		Connect: func() {
 			// var err error
 			// if pool, err = pgxpool.New(ctx, config.App.Database.DSN); err != nil {
@@ -101,7 +101,7 @@ func database() *migrator.Database {
 			// 	log.Fatal(err)
 			// }
 		},
-		ExecIsVersionExists: func(versionsTable string, version int) bool {
+		ExecIsVersionExists: func(versionsTable string, version int64) bool {
 			// query := fmt.Sprintf("SELECT 1 FROM %s WHERE version = %d", versionsTable, version)
 			// row := pool.QueryRow(ctx, query)
 			// var exists int
