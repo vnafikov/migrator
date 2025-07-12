@@ -32,9 +32,16 @@ const (
 
 	schemaMigrations = "schema_migrations"
 	schemaSeeds      = "schema_seeds"
+
+	readMigrationErrorFormat = "%w: %s/%s"
 )
 
 var (
+	ErrDir              = errors.New("entry is a directory")
+	ErrInvalidExtension = fmt.Errorf("invalid file extension: expected %q", sqlSuffix)
+	ErrFilenameTooShort = fmt.Errorf("filename is too short: timestamp must be %d digits", versionLength)
+	ErrNoMarker         = fmt.Errorf("no marker found: expected %q or %q", upMarker, downMarker)
+
 	options Options
 	flags   = flagsSt{
 		bool:   make(map[string]*bool),
@@ -55,15 +62,15 @@ type Options struct {
 }
 
 type Database struct {
-	Connect                 func()
-	Close                   func()
-	AdminConnect            func()
-	AdminClose              func()
-	ExecCreateVersionsTable func(string)
-	ExecIsVersionExists     func(string, int64) bool
-	ExecQuery               func(string, ExecQueryOptions)
-	ExecCreateDB            func()
-	ExecDropDB              func()
+	Connect                 func() error
+	Close                   func() error
+	AdminConnect            func() error
+	AdminClose              func() error
+	ExecCreateVersionsTable func(string) error
+	ExecIsVersionExists     func(string, int64) (bool, error)
+	ExecQuery               func(string, ExecQueryOptions) error
+	ExecCreateDB            func() error
+	ExecDropDB              func() error
 }
 
 type ExecQueryOptions struct {
@@ -93,7 +100,7 @@ type migration struct {
 	isDown   bool
 }
 
-func Init(opt Options) {
+func Init(opt Options) error {
 	options = opt
 	optionDatabaseNames := mapKeys(options.Databases)
 	dbFlag := flag.String(flagDatabases, "", fmt.Sprintf(`options: %s. All by default.`, strings.Join(optionDatabaseNames, ", ")))
@@ -120,7 +127,7 @@ The flags can be combined.
 	flag.Parse()
 	setDatabases(optionDatabaseNames, dbFlag)
 	setFlagsAny()
-	readFilenames()
+	return readFilenames()
 }
 
 func mapKeys[M ~map[K]V, K comparable, V any](m M) []K {
@@ -174,53 +181,76 @@ func setFlagsAny() {
 	}
 }
 
-func readFilenames() {
+func readFilenames() error {
 	for _, database := range databases {
 		files[database] = new(filesSt)
-		readMigrationFilenames(database)
-		readSeedFilenames(database)
+		if err := readMigrationFilenames(database); err != nil {
+			return err
+		}
+
+		if err := readSeedFilenames(database); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
-func readMigrationFilenames(database string) {
-	entries := readDir(database)
+func readMigrationFilenames(database string) error {
+	entries, err := readDir(database)
+	if err != nil {
+		return err
+	}
+
 	sortEntries(entries)
 	for _, entry := range entries {
-		m, ok := readMigration(entry, database)
-		if !ok {
+		name := entry.Name()
+		if entry.IsDir() && name == seedsSubdir {
 			continue
 		}
 
-		name := entry.Name()
-		if strings.Contains(name, downMarker) {
+		m, err := readMigration(entry, database)
+		if err != nil {
+			return err
+		}
+
+		switch {
+		case strings.Contains(name, downMarker):
 			m.isDown = true
 			files[database].migrations.down = append(files[database].migrations.down, m)
-		} else if strings.Contains(name, upMarker) {
+		case strings.Contains(name, upMarker):
 			files[database].migrations.up = append(files[database].migrations.up, m)
+		default:
+			return fmt.Errorf(readMigrationErrorFormat, ErrNoMarker, database, name)
 		}
 	}
+	return nil
 }
 
-func readSeedFilenames(database string) {
+func readSeedFilenames(database string) error {
 	path := fmt.Sprintf("%s/%s", database, seedsSubdir)
-	entries := readDir(path)
+	entries, err := readDir(path)
+	if err != nil {
+		return err
+	}
+
 	sortEntries(entries)
 	for _, entry := range entries {
-		s, ok := readMigration(entry, path)
-		if !ok {
-			continue
+		s, err := readMigration(entry, path)
+		if err != nil {
+			return err
 		}
 
 		files[database].seeds = append(files[database].seeds, s)
 	}
+	return nil
 }
 
-func readDir(name string) []fs.DirEntry {
+func readDir(name string) ([]fs.DirEntry, error) {
 	entries, err := options.FS.ReadDir(name)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		log.Fatal(err)
+		return nil, err
 	}
-	return entries
+	return entries, nil
 }
 
 func sortEntries(entries []fs.DirEntry) {
@@ -229,131 +259,220 @@ func sortEntries(entries []fs.DirEntry) {
 	})
 }
 
-func readMigration(entry fs.DirEntry, path string) (m migration, ok bool) {
+func readMigration(entry fs.DirEntry, path string) (migration, error) {
+	var m migration
 	name := entry.Name()
-	if entry.IsDir() || !strings.HasSuffix(name, sqlSuffix) || len(name) < versionLength {
-		return m, false
+	if entry.IsDir() {
+		return m, fmt.Errorf(readMigrationErrorFormat, ErrDir, path, name)
+	}
+	if !strings.HasSuffix(name, sqlSuffix) {
+		return m, fmt.Errorf(readMigrationErrorFormat, ErrInvalidExtension, path, name)
+	}
+	if len(name) < versionLength+len(sqlSuffix) {
+		return m, fmt.Errorf(readMigrationErrorFormat, ErrFilenameTooShort, path, name)
 	}
 
 	var err error
 	if m.version, err = strconv.ParseInt(name[:versionLength], 10, 64); err != nil {
-		return m, false
+		return m, fmt.Errorf(readMigrationErrorFormat, err, path, name)
 	}
 
 	m.filepath = fmt.Sprintf("%s/%s", path, name)
-	return m, true
+	return m, nil
 }
 
-func Run() {
+func Run() error {
 	for _, databaseName := range databases {
 		log.Println("Database: " + databaseName)
 
 		database := options.Databases[databaseName]
 		f := files[databaseName]
 		if *flags.bool[flagDropDB] || *flags.bool[flagCreateDB] {
-			database.AdminConnect()
+			if err := database.AdminConnect(); err != nil {
+				return err
+			}
+
 			if *flags.bool[flagDropDB] {
-				dropDB(database)
+				if err := dropDB(database); err != nil {
+					return err
+				}
 			}
+
 			if *flags.bool[flagCreateDB] {
-				createDB(database)
+				if err := createDB(database); err != nil {
+					return err
+				}
 			}
-			database.AdminClose()
+
+			if err := database.AdminClose(); err != nil {
+				return err
+			}
 		}
+
 		if *flags.bool[flagRe] {
-			database.AdminConnect()
-			dropDB(database)
-			createDB(database)
-			database.AdminClose()
-			database.Connect()
-			migrate(database, f)
-			seed(database, f)
-			database.Close()
+			if err := database.AdminConnect(); err != nil {
+				return err
+			}
+
+			if err := dropDB(database); err != nil {
+				return err
+			}
+
+			if err := createDB(database); err != nil {
+				return err
+			}
+
+			if err := database.AdminClose(); err != nil {
+				return err
+			}
+
+			if err := database.Connect(); err != nil {
+				return err
+			}
+
+			if err := migrate(database, f); err != nil {
+				return err
+			}
+
+			if err := seed(database, f); err != nil {
+				return err
+			}
+
+			if err := database.Close(); err != nil {
+				return err
+			}
 		}
+
 		if *flags.bool[flagMigrate] || !flags.any {
-			database.Connect()
-			migrate(database, f)
-			database.Close()
+			if err := database.Connect(); err != nil {
+				return err
+			}
+
+			if err := migrate(database, f); err != nil {
+				return err
+			}
+
+			if err := database.Close(); err != nil {
+				return err
+			}
 		}
+
 		if *flags.string[flagDown] != "" {
 			for _, down := range f.migrations.down {
 				if *flags.string[flagDown] != strconv.FormatInt(down.version, 10) {
 					continue
 				}
 
-				database.Connect()
+				if err := database.Connect(); err != nil {
+					return err
+				}
 
 				log.Println("Rollback migration...")
 
-				migrateFile(database, down, schemaMigrations)
-				database.Close()
+				if err := migrateFile(database, down, schemaMigrations); err != nil {
+					return err
+				}
+
+				if err := database.Close(); err != nil {
+					return err
+				}
 				break
 			}
 		}
+
 		if *flags.string[flagUp] != "" {
 			for _, up := range f.migrations.up {
 				if *flags.string[flagUp] != strconv.FormatInt(up.version, 10) {
 					continue
 				}
 
-				database.Connect()
+				if err := database.Connect(); err != nil {
+					return err
+				}
 
 				log.Println("Migrating...")
 
-				migrateFile(database, up, schemaMigrations)
-				database.Close()
+				if err := migrateFile(database, up, schemaMigrations); err != nil {
+					return err
+				}
+
+				if err := database.Close(); err != nil {
+					return err
+				}
 				break
 			}
 		}
+
 		if *flags.bool[flagSeed] || !flags.any {
-			database.Connect()
-			seed(database, f)
-			database.Close()
+			if err := database.Connect(); err != nil {
+				return err
+			}
+
+			if err := seed(database, f); err != nil {
+				return err
+			}
+
+			if err := database.Close(); err != nil {
+				return err
+			}
 		}
+
 		if *flags.bool[flagIrr] {
 			printIrreversibleMigrations(f)
 		}
 	}
 
 	log.Println("Done!")
+
+	return nil
 }
 
-func dropDB(database Database) {
+func dropDB(database Database) error {
 	log.Println("Dropping DB...")
 
-	database.ExecDropDB()
+	return database.ExecDropDB()
 }
 
-func createDB(database Database) {
+func createDB(database Database) error {
 	log.Println("Creating DB...")
 
-	database.ExecCreateDB()
+	return database.ExecCreateDB()
 }
 
-func migrate(database Database, f *filesSt) {
+func migrate(database Database, f *filesSt) error {
 	log.Println("Migrating...")
 
 	for _, up := range f.migrations.up {
-		migrateFile(database, up, schemaMigrations)
+		if err := migrateFile(database, up, schemaMigrations); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
-func migrateFile(database Database, m migration, versionsTable string) {
-	database.ExecCreateVersionsTable(versionsTable)
-	if !m.isDown && database.ExecIsVersionExists(versionsTable, m.version) {
-		return
+func migrateFile(database Database, m migration, versionsTable string) error {
+	if err := database.ExecCreateVersionsTable(versionsTable); err != nil {
+		return err
+	}
+
+	exists, err := database.ExecIsVersionExists(versionsTable, m.version)
+	if err != nil {
+		return err
+	}
+	if !m.isDown && exists {
+		return nil
 	}
 
 	log.Println(m.filepath)
 
-	queriesBytes, err := options.FS.ReadFile(m.filepath)
+	b, err := options.FS.ReadFile(m.filepath)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
-	queries := string(queriesBytes)
+	queries := strings.TrimSpace(string(b))
 	inTransaction := !strings.HasPrefix(queries, noTransactionComment)
-	database.ExecQuery(queries, ExecQueryOptions{
+	return database.ExecQuery(queries, ExecQueryOptions{
 		IsDown:        m.isDown,
 		VersionsTable: versionsTable,
 		Version:       m.version,
@@ -361,12 +480,15 @@ func migrateFile(database Database, m migration, versionsTable string) {
 	})
 }
 
-func seed(database Database, f *filesSt) {
+func seed(database Database, f *filesSt) error {
 	log.Println("Seeding...")
 
 	for _, s := range f.seeds {
-		migrateFile(database, s, schemaSeeds)
+		if err := migrateFile(database, s, schemaSeeds); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 func printIrreversibleMigrations(f *filesSt) {

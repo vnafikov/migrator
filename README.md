@@ -57,13 +57,18 @@ package main
 func main() {
 	// ...
 
-	migrator.Init(migrator.Options{
+	if err := migrator.Init(migrator.Options{
 		FS: migrations.FS,
 		Databases: map[string]migrator.Database{
 			"db": database(),
 		},
-	})
-	migrator.Run()
+	}); err != nil {
+		log.Fatal(err)
+	}
+
+	if err := migrator.Run(); err != nil {
+		log.Fatal(err)
+	}
 }
 
 func database() migrator.Database {
@@ -72,49 +77,47 @@ func database() migrator.Database {
 	// 	adminPool *pgxpool.Pool
 	// )
 	return migrator.Database{
-		Connect: func() {
+		Connect: func() error {
 			// var err error
-			// if pool, err = pgxpool.New(ctx, config.App.Database.DSN); err != nil {
-			// 	log.Fatal(err)
-			// }
+			// pool, err = pgxpool.New(ctx, config.App.Database.DSN)
+			// return err
 		},
-		Close: func() {
+		Close: func() error {
 			// pool.Close()
+			// return nil
 		},
-		AdminConnect: func() {
+		AdminConnect: func() error {
 			// var err error
-			// if adminPool, err = pgxpool.New(ctx, adminDSN); err != nil {
-			// 	log.Fatal(err)
-			// }
+			// adminPool, err = pgxpool.New(ctx, adminDSN)
+			// return err
 		},
-		AdminClose: func() {
+		AdminClose: func() error {
 			// adminPool.Close()
+			// return nil
 		},
-		ExecCreateVersionsTable: func(versionsTable string) {
+		ExecCreateVersionsTable: func(versionsTable string) error {
 			// query := `CREATE TABLE IF NOT EXISTS %s (
 			// 	version BIGINT PRIMARY KEY,
 			// 	created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 			// )`
 			// query = fmt.Sprintf(query, versionsTable)
 			//
-			// if _, err := pool.Exec(ctx, query); err != nil {
-			// 	log.Fatal(err)
-			// }
+			// _, err := pool.Exec(ctx, query)
+			// return err
 		},
-		ExecIsVersionExists: func(versionsTable string, version int64) bool {
+		ExecIsVersionExists: func(versionsTable string, version int64) (bool, error) {
 			// query := fmt.Sprintf("SELECT 1 FROM %s WHERE version = %d", versionsTable, version)
 			// row := pool.QueryRow(ctx, query)
 			// var exists int
 			// if err := row.Scan(&exists); err != nil {
 			// 	if errors.Is(err, pgx.ErrNoRows) {
-			// 		return false
+			// 		return false, nil
 			// 	}
-			//
-			// 	log.Fatal(err)
+			// 	return false, err
 			// }
-			// return true
+			// return true, nil
 		},
-		ExecQuery: func(queries string, options migrator.ExecQueryOptions) {
+		ExecQuery: func(queries string, options migrator.ExecQueryOptions) error {
 			// var updateVersionQuery string
 			// if options.IsDown {
 			// 	updateVersionQuery = `
@@ -126,30 +129,25 @@ func database() migrator.Database {
 			// queries += fmt.Sprintf(updateVersionQuery, options.VersionsTable, options.Version)
 			//
 			// if options.InTransaction {
-			// 	if _, err := pool.Exec(ctx, strings.TrimSpace(queries)); err != nil {
-			// 		log.Fatal(err)
-			// 	}
-			// 	return
+			// 	_, err := pool.Exec(ctx, strings.TrimSpace(queries))
+			// 	return err
 			// }
 			//
 			// queryList := strings.Split(queries, ";")
 			// for _, q := range queryList {
 			// 	if _, err := pool.Exec(ctx, strings.TrimSpace(q)); err != nil {
-			// 		log.Fatal(err)
-			// 	}
+			// 	    return err
+			//  }
 			// }
+			// return nil
 		},
-		ExecCreateDB: func() {
+		ExecCreateDB: func() error {
 			// _, err := adminPool.Exec(ctx, fmt.Sprintf("CREATE DATABASE %s", config.App.Database.Name))
-			// if err != nil {
-			// 	log.Fatal(err)
-			// }
+			// return err
 		},
-		ExecDropDB: func() {
+		ExecDropDB: func() error {
 			// _, err := adminPool.Exec(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS %s", config.App.Database.Name))
-			// if err != nil {
-			// 	log.Fatal(err)
-			// }
+			// return err
 		},
 	}
 }
