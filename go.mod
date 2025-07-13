@@ -1,3 +1,3 @@
 module github.com/vnafikov/migrator
 
-go 1.24.4
+go 1.24.5

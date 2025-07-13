@@ -57,98 +57,109 @@ package main
 func main() {
 	// ...
 
-	if err := migrator.Init(migrator.Options{
-		FS: migrations.FS,
+	options := migrator.Options{
+		FS:        migrations.FS,
 		Databases: map[string]migrator.Database{
-			"db": database(),
+			"postgres": new(postgres),
 		},
-	}); err != nil {
+	}
+	if err := migrator.Init(options); err != nil {
 		log.Fatal(err)
 	}
 
-	if err := migrator.Run(); err != nil {
+	if err := migrator.Run(ctx); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func database() migrator.Database {
-	// var (
-	// 	pool      *pgxpool.Pool
-	// 	adminPool *pgxpool.Pool
-	// )
-	return migrator.Database{
-		Connect: func() error {
-			// var err error
-			// pool, err = pgxpool.New(ctx, config.App.Database.DSN)
-			// return err
-		},
-		Close: func() error {
-			// pool.Close()
-			// return nil
-		},
-		AdminConnect: func() error {
-			// var err error
-			// adminPool, err = pgxpool.New(ctx, adminDSN)
-			// return err
-		},
-		AdminClose: func() error {
-			// adminPool.Close()
-			// return nil
-		},
-		ExecCreateVersionsTable: func(versionsTable string) error {
-			// query := `CREATE TABLE IF NOT EXISTS %s (
-			// 	version BIGINT PRIMARY KEY,
-			// 	created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-			// )`
-			// query = fmt.Sprintf(query, versionsTable)
-			//
-			// _, err := pool.Exec(ctx, query)
-			// return err
-		},
-		ExecIsVersionExists: func(versionsTable string, version int64) (bool, error) {
-			// query := fmt.Sprintf("SELECT 1 FROM %s WHERE version = %d", versionsTable, version)
-			// row := pool.QueryRow(ctx, query)
-			// var exists int
-			// if err := row.Scan(&exists); err != nil {
-			// 	if errors.Is(err, pgx.ErrNoRows) {
-			// 		return false, nil
-			// 	}
-			// 	return false, err
-			// }
-			// return true, nil
-		},
-		ExecQuery: func(queries string, options migrator.ExecQueryOptions) error {
-			// var updateVersionQuery string
-			// if options.IsDown {
-			// 	updateVersionQuery = `
-			// DELETE FROM %s WHERE version = %d`
-			// } else {
-			// 	updateVersionQuery = `
-			// INSERT INTO %s (version) VALUES (%d)`
-			// }
-			// queries += fmt.Sprintf(updateVersionQuery, options.VersionsTable, options.Version)
-			//
-			// if options.InTransaction {
-			// 	_, err := pool.Exec(ctx, strings.TrimSpace(queries))
-			// 	return err
-			// }
-			//
-			// queryList := strings.Split(queries, ";")
-			// for _, q := range queryList {
-			// 	if _, err := pool.Exec(ctx, strings.TrimSpace(q)); err != nil {
-			// 	    return err
-			//  }
-			// }
-			// return nil
-		},
-		ExecCreateDB: func() error {
-			// _, err := adminPool.Exec(ctx, fmt.Sprintf("CREATE DATABASE %s", config.App.Database.Name))
-			// return err
-		},
-		ExecDropDB: func() error {
-			// _, err := adminPool.Exec(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS %s", config.App.Database.Name))
-			// return err
-		},
-	}
+type postgres struct {
+	// pool      *pgxpool.Pool
+	// adminPool *pgxpool.Pool
+}
+
+func (pg *postgres) Connect(ctx context.Context) error {
+	// var err error
+	// pg.pool, err = pgxpool.New(ctx, config.App.Postgres.DSN)
+	// return err
+}
+
+func (pg *postgres) Close(ctx context.Context) error {
+	// pg.pool.Close()
+	// return nil
+}
+
+func (pg *postgres) AdminConnect(ctx context.Context) error {
+	// var err error
+	// pg.adminPool, err = pgxpool.New(ctx, adminDSN)
+	// return err
+}
+
+func (pg *postgres) AdminClose(ctx context.Context) error {
+	// pg.adminPool.Close()
+	// return nil
+}
+
+func (pg *postgres) ExecCreateVersionsTable(ctx context.Context, versionsTable string) error {
+	// query := `CREATE TABLE IF NOT EXISTS %s (
+	// version BIGINT PRIMARY KEY,
+	// created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+	// )`
+	// query = fmt.Sprintf(query, versionsTable)
+	//
+	// _, err := pg.pool.Exec(ctx, query)
+	// return err
+}
+
+func (pg *postgres) ExecIsVersionExists(ctx context.Context, versionsTable string, version int64) (bool, error) {
+	// query := fmt.Sprintf("SELECT TRUE FROM %s WHERE version = %d", versionsTable, version)
+	//
+	// row := pg.pool.QueryRow(ctx, query)
+	// var exists bool
+	// if err := row.Scan(&exists); err != nil {
+	// 	if errors.Is(err, pgx.ErrNoRows) {
+	// 		return false, nil
+	// 	}
+	// 	return false, err
+	// }
+	// return true, nil
+}
+
+func (pg *postgres) ExecQuery(ctx context.Context, queries string, options migrator.ExecQueryOptions) error {
+	// var updateVersionQuery string
+	// if options.IsDown {
+	// 	updateVersionQuery = `
+	// DELETE FROM %s WHERE version = %d`
+	// } else {
+	// 	updateVersionQuery = `
+	// INSERT INTO %s (version) VALUES (%d)`
+	// }
+	// queries += fmt.Sprintf(updateVersionQuery, options.VersionsTable, options.Version)
+	//
+	// if options.InTransaction {
+	// 	_, err := pg.pool.Exec(ctx, queries)
+	// 	return err
+	// }
+	//
+	// queryList := strings.Split(queries, ";")
+	// for _, query := range queryList {
+	// 	if _, err := pg.pool.Exec(ctx, strings.TrimSpace(query)); err != nil {
+	// 		return err
+	// 	}
+	// }
+	// return nil
+}
+
+func (pg *postgres) ExecCreateDB(ctx context.Context) error {
+	// query := fmt.Sprintf("CREATE DATABASE %s", config.App.Postgres.Database)
+	//
+	// _, err := pg.adminPool.Exec(ctx, query)
+	// return err
+}
+
+func (pg *postgres) ExecDropDB(ctx context.Context) error {
+	// query := fmt.Sprintf("DROP DATABASE IF EXISTS %s", config.App.Postgres.Database)
+	//
+	// _, err := pg.adminPool.Exec(ctx, query)
+	// return err
 }
 ```
