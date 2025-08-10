@@ -35,16 +35,16 @@ At the beginning of the *.sql file:
 ```
 
 ### Example in the project:
-migrations/db/&ast;.sql\
-migrations/db/seeds/&ast;.sql\
+migrations/postgres/&ast;.sql\
+migrations/postgres/seeds/&ast;.sql\
 migrations/migrator.go:
 ```go
 package migrations
 
 import "embed"
 
-//go:embed db/*.sql
-//go:embed db/seeds/*.sql
+//go:embed postgres/*.sql
+//go:embed postgres/seeds/*.sql
 var FS embed.FS
 ```
 
